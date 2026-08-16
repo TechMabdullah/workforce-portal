@@ -1,0 +1,13 @@
+# Use this workspace to collaborate
+workspace:
+  id: 80c798c8-088e-4999-87c1-b01dfdfbbfc1
+
+cloudResources:
+  collections:
+    ../postman/collections/KKGS Portal API: c5731f35-779e-4e1f-9719-17b8b3694ef9
+
+# All resources in the `postman/` folder are automatically registered in Local View.
+# Point to additional files outside the `postman/` folder to register them individually. Example:
+#localResources:
+#  collections:
+#    - ../tests/E2E Test Collection/

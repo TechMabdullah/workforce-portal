@@ -1,0 +1,21 @@
+$kind: http-request
+url: "{{baseUrl}}/api/v1/ledger?ledgerId={{ledgerId}}"
+method: POST
+headers:
+  Authorization: Bearer {{idToken}}
+  Content-Type: application/json
+queryParams:
+  ledgerId: "{{ledgerId}}"
+body:
+  type: text
+  content: |-
+    {
+      "amount": 50,
+      "type": "REPAYMENT",
+      "note": "Test repayment"
+    }
+scripts:
+  - type: afterResponse
+    code: pm.test('Status is 200', () => pm.response.to.have.status(200));
+    language: text/javascript
+order: 2000

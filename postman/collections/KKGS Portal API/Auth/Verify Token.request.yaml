@@ -1,0 +1,12 @@
+$kind: http-request
+url: "{{baseUrl}}/api/auth/verify-token"
+method: POST
+headers:
+  Authorization: Bearer {{idToken}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Status is 200', () => pm.response.to.have.status(200));
+      pm.test('Response has valid=true', () => pm.expect(pm.response.json().valid).to.eql(true));
+    language: text/javascript
+order: 1000
