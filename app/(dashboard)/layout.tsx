@@ -6,10 +6,12 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { Footer } from "@/components/layout/Footer";
-import { useFcmToken } from "@/hooks/useFcmToken"; // add this import
+import { useFcmToken } from "@/hooks/useFcmToken";
+import { useSignalIdentity } from "@/hooks/useSignalIdentity";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  useFcmToken(); // add this line
+  useFcmToken();
+  useSignalIdentity();
 
   return (
     <AuthGuard>

@@ -15,6 +15,23 @@ function addressFor(uid: string): SignalProtocolAddress {
   return new SignalProtocolAddress(uid, 1); // deviceId hardcoded to 1 — single device per account
 }
 
+// Converts a "binary string" (each char code = one raw byte — the format
+// libsignal-protocol-typescript uses for encrypted message bodies) into an ArrayBuffer.
+function binaryStringToBuf(binaryString: string): ArrayBuffer {
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+// Converts an ArrayBuffer into that same "binary string" format for feeding back into libsignal.
+function bufToBinaryString(buf: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buf))
+    .map((b) => String.fromCharCode(b))
+    .join("");
+}
+
 // Atomically claims (and deletes) one of the recipient's one-time prekeys, so it can
 // never be reused by a second concurrent session — a core Signal Protocol guarantee.
 async function claimOneTimePreKey(uid: string): Promise<{ keyId: number; publicKey: string } | null> {
@@ -72,7 +89,11 @@ export async function encryptForUser(
   const cipher = new SessionCipher(store, address);
   const encoded = new TextEncoder().encode(plaintext);
   const result = await cipher.encrypt(encoded.buffer);
-  return { content: bufToBase64(base64ToBuf(result.body as string)), messageType: result.type };
+
+  // result.body is a binary string (one byte per char code), NOT base64 —
+  // convert it to a real buffer first, then base64-encode that for safe storage in Firestore.
+  const bodyBuf = binaryStringToBuf(result.body as string);
+  return { content: bufToBase64(bodyBuf), messageType: result.type };
 }
 
 // Decrypts a message exactly once, caching the plaintext so reloads/re-renders
@@ -89,10 +110,11 @@ export async function decryptFromUser(
 
   const address = addressFor(senderUid);
   const cipher = new SessionCipher(store, address);
+
+  // content is base64 (what we stored) — decode it back to a buffer, then to the
+  // binary-string format libsignal's decrypt functions expect as input.
   const bodyBuf = base64ToBuf(content);
-  const bodyBinaryString = Array.from(new Uint8Array(bodyBuf))
-    .map((b) => String.fromCharCode(b))
-    .join("");
+  const bodyBinaryString = bufToBinaryString(bodyBuf);
 
   const plaintextBuf =
     messageType === 3

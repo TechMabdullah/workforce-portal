@@ -20,12 +20,14 @@ import { SafetyNumberDialog } from "@/components/chat/SafetyNumberDialog";
 type DecryptedMessage = ChatMessage & { plaintext: string };
 
 export default function ChatThreadPage() {
-  const { chatId } = useParams<{ chatId: string }>();
+ const { chatId } = useParams<{ chatId: string }>();
   const { firebaseUser } = useAuth();
   const { store, ready: identityReady } = useSignalIdentity();
 
   const [otherUid, setOtherUid] = useState<string | null>(null);
   const [otherDisplayName, setOtherDisplayName] = useState("this person");
+
+console.log("otherUid:", otherUid, "identityReady:", identityReady); // ← add this line
   const [rawMessages, setRawMessages] = useState<ChatMessage[]>([]);
   const [messages, setMessages] = useState<DecryptedMessage[]>([]);
   const [input, setInput] = useState("");
@@ -35,17 +37,35 @@ export default function ChatThreadPage() {
 
   // Resolve the other participant's uid + display name for this 1-on-1 chat
   useEffect(() => {
-    if (!chatId || !firebaseUser) return;
-    getDoc(doc(db, "chats", chatId)).then(async (snap) => {
+  if (!chatId || !firebaseUser) {
+    console.log("[otherUid effect] Skipping — chatId or firebaseUser missing", { chatId, firebaseUser });
+    return;
+  }
+
+  console.log("[otherUid effect] STARTING getDoc for chatId:", chatId);
+
+  const chatDocPromise = getDoc(doc(db, "chats", chatId));
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("getDoc timed out after 8s")), 8000)
+  );
+
+  Promise.race([chatDocPromise, timeoutPromise])
+    .then(async (snap: any) => {
+      console.log("[otherUid effect] getDoc RESOLVED. exists:", snap.exists(), "data:", snap.data());
       const participantIds: string[] = snap.data()?.participantIds ?? [];
+      console.log("[otherUid effect] participantIds:", participantIds);
       const other = participantIds.find((id) => id !== firebaseUser.uid) ?? null;
+      console.log("[otherUid effect] Resolved other uid:", other);
       setOtherUid(other);
       if (other) {
         const otherSnap = await getDoc(doc(db, "users", other));
         setOtherDisplayName(otherSnap.data()?.displayName ?? "this person");
       }
+    })
+    .catch((err) => {
+      console.error("[otherUid effect] FAILED:", err);
     });
-  }, [chatId, firebaseUser]);
+}, [chatId, firebaseUser]);
 
   // Listen for raw (encrypted) messages
   useEffect(() => {

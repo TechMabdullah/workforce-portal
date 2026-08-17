@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { doc, updateDoc } from "firebase/firestore";
+import { doc, setDoc } from "firebase/firestore";
 import { toast } from "sonner";
 import { Loader2, User, Bell, Shield, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -29,20 +29,24 @@ export default function SettingsPage() {
   const [notifAnnouncements, setNotifAnnouncements] = useState(true);
 
   async function handleSaveProfile() {
-    if (!firebaseUser) return;
-    setSaving(true);
-    try {
-      await updateDoc(doc(db, "users", firebaseUser.uid), {
+  if (!firebaseUser) return;
+  setSaving(true);
+  try {
+    await setDoc(
+      doc(db, "users", firebaseUser.uid),
+      {
         displayName,
         phoneNumber,
-      });
-      toast.success("Profile updated");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update profile");
-    } finally {
-      setSaving(false);
-    }
+      },
+      { merge: true } // creates the doc if missing, updates fields if it exists — self-healing
+    );
+    toast.success("Profile updated");
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "Failed to update profile");
+  } finally {
+    setSaving(false);
   }
+}
 
   async function handlePasswordReset() {
     if (!appUser?.email) return;
@@ -83,7 +87,7 @@ export default function SettingsPage() {
         <CardContent className="space-y-4">
           <div className="flex items-center gap-4">
             <Avatar className="h-16 w-16">
-              <AvatarImage src={appUser?.photoURL} alt={appUser?.displayName} />
+              <AvatarImage src={appUser?.photoURL ?? undefined} alt={appUser?.displayName ?? "User avatar"} />
               <AvatarFallback className="text-lg">{initials}</AvatarFallback>
             </Avatar>
             <div>
