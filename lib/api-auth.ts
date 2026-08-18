@@ -5,7 +5,7 @@ import type { UserRole } from "@/types";
 export async function requireAuth(request: NextRequest) {
   try {
     const decoded = await verifyIdToken(request.headers.get("authorization"));
-    return { uid: decoded.uid, error: null };
+    return { uid: decoded.uid, error: null as NextResponse | null };
   } catch {
     return { uid: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
@@ -20,5 +20,5 @@ export async function requireRole(uid: string, allowedRoles: UserRole[]) {
   if (!allowedRoles.includes(role)) {
     return { authorized: false, error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   }
-  return { authorized: true, error: null };
+  return { authorized: true, error: null as NextResponse | null };
 }

@@ -23,7 +23,9 @@ export async function POST(request: NextRequest) {
   if (error) return error;
 
   const roleCheck = await requireRole(uid!, ["SUPER_ADMIN", "OWNER", "MANAGER", "SUPERVISOR"]);
-  if (!roleCheck.authorized) return roleCheck.error;
+  if (!roleCheck.authorized) {
+    return roleCheck.error ?? NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { success } = await ratelimit.limit(uid!);
   if (!success) return NextResponse.json({ error: "Too many requests" }, { status: 429 });
@@ -42,11 +44,11 @@ export async function POST(request: NextRequest) {
   });
 
   await sendPushToUser(
-  parsed.data.assignedWorkerId,
-  "New order assigned",
-  parsed.data.title,
-  `/orders/${ref.id}`
-);
+    parsed.data.assignedWorkerId,
+    "New order assigned",
+    parsed.data.title,
+    `/orders/${ref.id}`
+  );
 
   return NextResponse.json({ id: ref.id }, { status: 200 });
 }

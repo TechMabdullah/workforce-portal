@@ -100,9 +100,10 @@ console.log("otherUid:", otherUid, "identityReady:", identityReady); // ← add 
           try {
             const plaintext = await decryptFromUser(m.senderId, store, m.id, m.content, m.messageType);
             results.push({ ...m, plaintext });
-          } catch {
+            } catch (err) {
+            console.error("[decrypt] Failed for message", m.id, err);
             results.push({ ...m, plaintext: "⚠️ Could not decrypt this message" });
-          }
+            }
         } else {
           results.push({ ...m, plaintext: m.content }); // legacy/plaintext fallback
         }

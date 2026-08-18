@@ -90,14 +90,18 @@ export async function encryptForUser(
   const encoded = new TextEncoder().encode(plaintext);
   const result = await cipher.encrypt(encoded.buffer);
 
-  // result.body is a binary string (one byte per char code), NOT base64 —
-  // convert it to a real buffer first, then base64-encode that for safe storage in Firestore.
+  console.log("[encrypt] raw result.body type:", typeof result.body, "length:", (result.body as string).length);
+  console.log("[encrypt] result.type:", result.type);
+
   const bodyBuf = binaryStringToBuf(result.body as string);
-  return { content: bufToBase64(bodyBuf), messageType: result.type };
+  console.log("[encrypt] bodyBuf byteLength:", bodyBuf.byteLength);
+
+  const base64Content = bufToBase64(bodyBuf);
+  console.log("[encrypt] base64Content length:", base64Content.length, "sample:", base64Content.slice(0, 50));
+
+  return { content: base64Content, messageType: result.type };
 }
 
-// Decrypts a message exactly once, caching the plaintext so reloads/re-renders
-// never attempt to decrypt the same ciphertext twice (which breaks ratchet state).
 export async function decryptFromUser(
   senderUid: string,
   store: SignalProtocolStore,
@@ -108,13 +112,17 @@ export async function decryptFromUser(
   const cached = await store.getDecryptedCache(messageId);
   if (cached !== undefined) return cached;
 
+  console.log("[decrypt] messageId:", messageId, "messageType:", messageType);
+  console.log("[decrypt] content (base64) length:", content.length, "sample:", content.slice(0, 50));
+
   const address = addressFor(senderUid);
   const cipher = new SessionCipher(store, address);
 
-  // content is base64 (what we stored) — decode it back to a buffer, then to the
-  // binary-string format libsignal's decrypt functions expect as input.
   const bodyBuf = base64ToBuf(content);
+  console.log("[decrypt] bodyBuf byteLength:", bodyBuf.byteLength);
+
   const bodyBinaryString = bufToBinaryString(bodyBuf);
+  console.log("[decrypt] bodyBinaryString length:", bodyBinaryString.length);
 
   const plaintextBuf =
     messageType === 3
