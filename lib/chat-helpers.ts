@@ -4,15 +4,16 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   setDoc,
   addDoc,
   updateDoc,
+  deleteDoc,
+  writeBatch,
   arrayUnion,
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
-import { encryptForUser } from "@/lib/crypto/signal-session";
-import type { SignalProtocolStore } from "@/lib/crypto/signal-store";
 
 export async function getOrCreateDirectChat(uidA: string, uidB: string): Promise<string> {
   const chatId = [uidA, uidB].sort().join("_");
@@ -33,28 +34,19 @@ export async function getOrCreateDirectChat(uidA: string, uidB: string): Promise
 export async function sendMessage(
   chatId: string,
   senderId: string,
-  recipientUid: string,
-  store: SignalProtocolStore,
-  plaintext: string,
+  content: string,
   type: "text" | "image" | "file" = "text"
 ) {
-  const { content, messageType } = await encryptForUser(recipientUid, store, plaintext);
-
-  const docRef = await addDoc(collection(db, "chats", chatId, "messages"), {
+  await addDoc(collection(db, "chats", chatId, "messages"), {
     senderId,
     content,
-    messageType,
-    encrypted: true,
     type,
     createdAt: serverTimestamp(),
     readBy: [senderId],
   });
 
-  // Cache our own sent plaintext immediately — we already know it, no need to decrypt later
-  await store.setDecryptedCache(docRef.id, plaintext);
-
   await updateDoc(doc(db, "chats", chatId), {
-    lastMessage: "🔒 New message",
+    lastMessage: type === "text" ? content : `[${type}]`,
     lastMessageAt: serverTimestamp(),
   });
 }
@@ -63,4 +55,19 @@ export async function markMessageRead(chatId: string, messageId: string, userId:
   await updateDoc(doc(db, "chats", chatId, "messages", messageId), {
     readBy: arrayUnion(userId),
   });
+}
+
+// Admin-only — deletes every message in the chat, then the chat doc itself.
+export async function deleteChatWithMessages(chatId: string) {
+  const messagesRef = collection(db, "chats", chatId, "messages");
+  const messagesSnap = await getDocs(messagesRef);
+
+  const docs = messagesSnap.docs;
+  for (let i = 0; i < docs.length; i += 450) {
+    const batch = writeBatch(db);
+    docs.slice(i, i + 450).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  await deleteDoc(doc(db, "chats", chatId));
 }

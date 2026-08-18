@@ -1,79 +1,59 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
-import { collection, doc, getDoc, query, orderBy, onSnapshot, Timestamp } from "firebase/firestore";
+import { useParams, useRouter } from "next/navigation";
+import { collection, doc, onSnapshot, query, orderBy, Timestamp } from "firebase/firestore";
 import { format } from "date-fns";
-import { Send, Lock, ShieldCheck, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { Send, Lock, Trash2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { db } from "@/lib/firebase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { useSignalIdentity } from "@/hooks/useSignalIdentity";
-import { sendMessage, markMessageRead } from "@/lib/chat-helpers";
-import { decryptFromUser } from "@/lib/crypto/signal-session";
+import { useRole } from "@/hooks/useRole";
+import { sendMessage, markMessageRead, deleteChatWithMessages } from "@/lib/chat-helpers";
+import { isChatUnlockedThisSession } from "@/lib/chat-lock-session";
+import { PasscodeGate } from "@/components/chat/PasscodeGate";
+import { ManageLockDialog } from "@/components/chat/ManageLockDialog";
 import { cn } from "@/lib/utils";
-import type { ChatMessage } from "@/types";
-import { SafetyNumberDialog } from "@/components/chat/SafetyNumberDialog";
-
-type DecryptedMessage = ChatMessage & { plaintext: string };
+import type { Chat, ChatMessage } from "@/types";
 
 export default function ChatThreadPage() {
- const { chatId } = useParams<{ chatId: string }>();
+  const { chatId } = useParams<{ chatId: string }>();
+  const router = useRouter();
   const { firebaseUser } = useAuth();
-  const { store, ready: identityReady } = useSignalIdentity();
+  const { isAdmin } = useRole();
 
-  const [otherUid, setOtherUid] = useState<string | null>(null);
-  const [otherDisplayName, setOtherDisplayName] = useState("this person");
-
-console.log("otherUid:", otherUid, "identityReady:", identityReady); // ← add this line
-  const [rawMessages, setRawMessages] = useState<ChatMessage[]>([]);
-  const [messages, setMessages] = useState<DecryptedMessage[]>([]);
+  const [chat, setChat] = useState<Chat | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [safetyDialogOpen, setSafetyDialogOpen] = useState(false);
+  const [unlocked, setUnlocked] = useState(false);
+  const [manageLockOpen, setManageLockOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Resolve the other participant's uid + display name for this 1-on-1 chat
   useEffect(() => {
-  if (!chatId || !firebaseUser) {
-    console.log("[otherUid effect] Skipping — chatId or firebaseUser missing", { chatId, firebaseUser });
-    return;
-  }
-
-  console.log("[otherUid effect] STARTING getDoc for chatId:", chatId);
-
-  const chatDocPromise = getDoc(doc(db, "chats", chatId));
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error("getDoc timed out after 8s")), 8000)
-  );
-
-  Promise.race([chatDocPromise, timeoutPromise])
-    .then(async (snap: any) => {
-      console.log("[otherUid effect] getDoc RESOLVED. exists:", snap.exists(), "data:", snap.data());
-      const participantIds: string[] = snap.data()?.participantIds ?? [];
-      console.log("[otherUid effect] participantIds:", participantIds);
-      const other = participantIds.find((id) => id !== firebaseUser.uid) ?? null;
-      console.log("[otherUid effect] Resolved other uid:", other);
-      setOtherUid(other);
-      if (other) {
-        const otherSnap = await getDoc(doc(db, "users", other));
-        setOtherDisplayName(otherSnap.data()?.displayName ?? "this person");
+    if (!chatId) return;
+    const unsub = onSnapshot(doc(db, "chats", chatId), (snap) => {
+      const chatData = snap.exists() ? ({ id: snap.id, ...snap.data() } as Chat) : null;
+      setChat(chatData);
+      // Check session-unlock status once we know whether it's actually locked
+      if (chatData?.passcodeHash) {
+        setUnlocked(isChatUnlockedThisSession(chatId));
+      } else {
+        setUnlocked(true); // no passcode set — nothing to unlock
       }
-    })
-    .catch((err) => {
-      console.error("[otherUid effect] FAILED:", err);
     });
-}, [chatId, firebaseUser]);
+    return () => unsub();
+  }, [chatId]);
 
-  // Listen for raw (encrypted) messages
   useEffect(() => {
     if (!chatId) return;
     const q = query(collection(db, "chats", chatId, "messages"), orderBy("createdAt", "asc"));
     const unsub = onSnapshot(q, (snap) => {
       const msgs = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as ChatMessage);
-      setRawMessages(msgs);
+      setMessages(msgs);
 
       if (firebaseUser) {
         msgs.forEach((m) => {
@@ -86,78 +66,68 @@ console.log("otherUid:", otherUid, "identityReady:", identityReady); // ← add 
     return () => unsub();
   }, [chatId, firebaseUser]);
 
-  // Decrypt sequentially, in order — Double Ratchet requires processing messages
-  // in send order, and each decrypted result is cached so it's never re-decrypted.
-  useEffect(() => {
-    if (!identityReady || !otherUid) return;
-    let cancelled = false;
-
-    async function decryptAll() {
-      const results: DecryptedMessage[] = [];
-      for (const m of rawMessages) {
-        if (cancelled) return;
-        if (m.encrypted && m.messageType !== undefined) {
-          try {
-            const plaintext = await decryptFromUser(m.senderId, store, m.id, m.content, m.messageType);
-            results.push({ ...m, plaintext });
-            } catch (err) {
-            console.error("[decrypt] Failed for message", m.id, err);
-            results.push({ ...m, plaintext: "⚠️ Could not decrypt this message" });
-            }
-        } else {
-          results.push({ ...m, plaintext: m.content }); // legacy/plaintext fallback
-        }
-      }
-      if (!cancelled) setMessages(results);
-    }
-
-    decryptAll();
-    return () => {
-      cancelled = true;
-    };
-  }, [rawMessages, identityReady, otherUid, store]);
-
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   async function handleSend() {
-    if (!input.trim() || !firebaseUser || !chatId || !otherUid) return;
+    if (!input.trim() || !firebaseUser || !chatId) return;
     const content = input;
     setInput("");
-    setSendError(null);
+    await sendMessage(chatId, firebaseUser.uid, content);
+  }
+
+  async function handleDelete() {
+    if (!chatId) return;
+    if (!confirm("Delete this entire chat and all its messages? This cannot be undone.")) return;
+    setDeleteBusy(true);
     try {
-      await sendMessage(chatId, firebaseUser.uid, otherUid, store, content);
+      await deleteChatWithMessages(chatId);
+      toast.success("Chat deleted");
+      router.push("/chat");
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "Failed to send — encryption setup issue");
-      setInput(content); // restore so they don't lose what they typed
+      toast.error(err instanceof Error ? err.message : "Failed to delete chat");
+      setDeleteBusy(false);
     }
   }
 
-  if (!identityReady) {
+  const isLocked = !!chat?.passcodeHash;
+
+  // Show the passcode entry screen if it's locked and this session hasn't unlocked it yet
+  if (chat && isLocked && !unlocked) {
     return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-8.5rem)] gap-2">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">Setting up encryption…</p>
-      </div>
+      <PasscodeGate
+        chatId={chatId}
+        correctHash={chat.passcodeHash!}
+        onUnlock={() => setUnlocked(true)}
+      />
     );
   }
 
   return (
     <div className="flex flex-col h-[calc(100vh-8.5rem)] max-w-2xl mx-auto">
-      <div className="flex items-center justify-between px-2 pt-1">
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Lock className="h-3 w-3" /> End-to-end encrypted
+      {isAdmin && (
+        <div className="flex items-center justify-end gap-1 px-2 pt-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs gap-1"
+            onClick={() => setManageLockOpen(true)}
+          >
+            <Lock className="h-3.5 w-3.5" />
+            {isLocked ? "Manage Lock" : "Lock Chat"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs gap-1 text-destructive hover:text-destructive"
+            onClick={handleDelete}
+            disabled={deleteBusy}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Delete
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 text-xs text-muted-foreground gap-1"
-          onClick={() => setSafetyDialogOpen(true)}
-        >
-          <ShieldCheck className="h-3 w-3" /> Verify
-        </Button>
-      </div>
+      )}
 
       <div className="flex-1 overflow-y-auto space-y-2 p-2">
         <AnimatePresence initial={false}>
@@ -177,7 +147,7 @@ console.log("otherUid:", otherUid, "identityReady:", identityReady); // ← add 
                     isMine ? "bg-primary text-primary-foreground" : "bg-muted"
                   )}
                 >
-                  <p>{m.plaintext}</p>
+                  <p>{m.content}</p>
                   <p
                     className={cn(
                       "text-[10px] mt-1",
@@ -195,8 +165,6 @@ console.log("otherUid:", otherUid, "identityReady:", identityReady); // ← add 
         <div ref={bottomRef} />
       </div>
 
-      {sendError && <p className="text-xs text-destructive px-2 pb-1">{sendError}</p>}
-
       <div className="flex items-center gap-2 border-t p-2">
         <Input
           value={input}
@@ -210,13 +178,12 @@ console.log("otherUid:", otherUid, "identityReady:", identityReady); // ← add 
         </Button>
       </div>
 
-      {otherUid && firebaseUser && (
-        <SafetyNumberDialog
-          open={safetyDialogOpen}
-          onOpenChange={setSafetyDialogOpen}
-          myUid={firebaseUser.uid}
-          otherUid={otherUid}
-          otherDisplayName={otherDisplayName}
+      {chatId && (
+        <ManageLockDialog
+          open={manageLockOpen}
+          onOpenChange={setManageLockOpen}
+          chatId={chatId}
+          isCurrentlyLocked={isLocked}
         />
       )}
     </div>

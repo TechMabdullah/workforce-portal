@@ -1,4 +1,3 @@
-// app/(dashboard)/layout.tsx
 "use client";
 
 import { AuthGuard } from "@/components/layout/AuthGuard";
@@ -7,11 +6,9 @@ import { Header } from "@/components/layout/Header";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { Footer } from "@/components/layout/Footer";
 import { useFcmToken } from "@/hooks/useFcmToken";
-import { useSignalIdentity } from "@/hooks/useSignalIdentity";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   useFcmToken();
-  useSignalIdentity();
 
   return (
     <AuthGuard>

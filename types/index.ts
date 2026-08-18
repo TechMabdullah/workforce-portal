@@ -180,3 +180,15 @@ export interface ChatMessage {
   createdAt: Timestamp;
   readBy: string[];
 }
+
+export interface Chat {
+  id: string;
+  isGroup: boolean;
+  participantIds: string[];
+  groupName?: string;
+  groupPhotoURL?: string;
+  lastMessage?: string;
+  lastMessageAt?: Timestamp;
+  createdAt: Timestamp;
+  passcodeHash?: string | null; // set only by admins; presence = chat is locked
+}
