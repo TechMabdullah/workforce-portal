@@ -19,6 +19,9 @@ import {
   verifyOtp,
 } from "@/lib/firebase/auth-helpers";
 import type { ConfirmationResult } from "firebase/auth";
+import { getDoc, doc } from "firebase/firestore";
+import { db } from "@/lib/firebase/client";
+import { getPostLoginRedirect } from "@/lib/redirect";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -39,11 +42,15 @@ export default function LoginPage() {
   const [otp, setOtp] = useState("");
   const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
 
+  async function redirectByRole(uid: string) {
+    const snap = await getDoc(doc(db, "users", uid));
+    router.push(getPostLoginRedirect(snap.data()?.role));
+  }
+
   async function handleGoogle() {
     setLoading(true);
     try {
       await signInWithGoogleRedirect();
-      router.push("/dashboard");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Google sign-in failed");
     } finally {
@@ -55,7 +62,6 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await signInWithFacebookRedirect();
-      router.push("/dashboard");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Facebook sign-in failed");
     } finally {
@@ -67,12 +73,10 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      if (isSignUp) {
-        await signUpWithPassword(email, password, displayName);
-      } else {
-        await signInWithPassword(email, password);
-      }
-      router.push("/dashboard");
+      const user = isSignUp
+        ? await signUpWithPassword(email, password, displayName)
+        : await signInWithPassword(email, password);
+      await redirectByRole(user.uid);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Authentication failed");
     } finally {
@@ -129,8 +133,8 @@ export default function LoginPage() {
     if (!confirmation) return;
     setLoading(true);
     try {
-      await verifyOtp(confirmation, otp);
-      router.push("/dashboard");
+      const user = await verifyOtp(confirmation, otp);
+      await redirectByRole(user.uid);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Invalid code");
     } finally {
